@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transaction Sequence Model</title>
+<style>
+  /* Chalk marketing palette: green-1 ground, chartreuse primary, mint accents. */
+  :root { --bg:#224A41; --panel:#1C3B34; --line:#32645B; --ink:#EFF5F3; --muted:#B9CFC7;
+          --accent:#BBD96D; --mint:#70CD96; --risk:#F8947F; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; padding:28px 16px; }
+  html.embed body { padding:22px 20px; }
+  html.embed header { display:none; }
+  .wrap { max-width:1100px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+  .mono { font-family:ui-monospace,"SFMono-Regular",Menlo,monospace; text-transform:uppercase;
+          letter-spacing:.06em; font-size:11px; }
+  h1 { font-size:22px; font-weight:500; margin:0 0 4px; letter-spacing:-0.3px; }
+  header p { color:var(--muted); margin:0; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  button { font:12px/14px ui-monospace,"SFMono-Regular",Menlo,monospace; text-transform:uppercase;
+           letter-spacing:.06em; border:1px solid var(--line); border-radius:20px; padding:9px 14px;
+           cursor:pointer; background:transparent; color:var(--muted); }
+  button:hover { color:var(--ink); border-color:var(--muted); }
+  button.on { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:10px 12px; }
+  .stat b { display:block; font-size:18px; font-weight:500; color:var(--ink); margin-top:2px; }
+  .stat span { color:var(--muted); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  .card h2 { margin:0; padding:10px 14px; border-bottom:1px solid var(--line); color:var(--muted);
+             display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:760px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:400; }
+  tr.fraud td:first-child { box-shadow:inset 3px 0 0 var(--risk); }
+  td.num { font-family:ui-monospace,Menlo,monospace; }
+  .bar { display:inline-block; height:6px; border-radius:3px; vertical-align:middle; margin-right:6px; }
+  .truth { font-family:ui-monospace,Menlo,monospace; font-size:10px; padding:1px 6px; border-radius:10px;
+           border:1px solid var(--risk); color:var(--risk); }
+  .next { color:var(--muted); }
+  .next b { color:var(--ink); font-weight:400; }
+  .chart { display:flex; align-items:flex-end; gap:6px; height:70px; padding:10px 14px 0; }
+  .chart div { flex:1; background:var(--mint); opacity:.85; border-radius:2px 2px 0 0; min-height:2px; }
+  .chartx { display:flex; gap:6px; padding:4px 14px 10px; color:var(--muted); }
+  .chartx span { flex:1; text-align:center; }
+  #err { color:var(--risk); }
+</style>
+<script>
+  if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>A transformer that reads card transactions</h1>
+    <p>Trained with PyTorch on synthetic transactions in a Chalk training run. It forecasts each customer's next transaction and scores every transaction for fraud.</p>
+  </header>
+  <div class="stats" id="stats"></div>
+  <div class="card">
+    <h2 class="mono"><span>Fraud precision by epoch (held-out customers)</span><span id="trained"></span></h2>
+    <div class="chart" id="chart"></div>
+    <div class="chartx mono" id="chartx"></div>
+  </div>
+  <div class="row" id="scenarios"></div>
+  <div class="row"><button id="another">Another customer</button><span class="mono" id="meta"></span><span id="err"></span></div>
+  <div class="card">
+    <h2 class="mono"><span id="title">Customer</span><span>red bar = model's fraud score · border = actual fraud</span></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr class="mono"><th>When</th><th>Category</th><th>Amount</th><th>Channel</th><th>Since prev</th><th>Fraud score</th><th>Surprise</th><th>Model expects next</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+const SCENARIOS = [
+  ["none", "Normal customer"], ["card_testing", "Card testing"],
+  ["account_takeover", "Account takeover"], ["atm_drain", "ATM drain"],
+];
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let scenario = "card_testing", seed = 1;
+const embedded = document.documentElement.classList.contains("embed") && window.parent !== window;
+// Tells an embedding page what the visitor did, using fixed action names only.
+const track = (action, label) => {
+  if (embedded) window.parent.postMessage({ type: "chalk-demo-interaction", action, label }, "*");
+};
+
+for (const [key, label] of SCENARIOS) {
+  const b = el("button", null, label);
+  b.dataset.key = key;
+  b.onclick = () => { scenario = key; seed = 1; track("select_scenario", key); load(); };
+  $("scenarios").appendChild(b);
+}
+$("another").onclick = () => { seed += 1; track("another_customer", scenario); load(); };
+
+function stat(label, value) {
+  const s = el("div", "stat");
+  s.appendChild(el("span", "mono", label));
+  s.appendChild(el("b", null, value));
+  return s;
+}
+
+async function loadModel() {
+  const m = await (await fetch("api/model")).json();
+  const last = m.history[m.history.length - 1];
+  $("stats").replaceChildren(
+    stat("Parameters", m.parameters.toLocaleString()),
+    stat("Layers × width", `${m.model.n_layers} × ${m.model.d_model}`),
+    stat("Fraud avg precision", last.fraud_average_precision.toFixed(3)),
+    stat("Fraud base rate", (last.fraud_base_rate * 100).toFixed(1) + "%"),
+    stat("Next-category acc.", (last.next_category_accuracy * 100).toFixed(1) + "%"),
+  );
+  $("trained").textContent = `${m.history.length} epochs · ${last.seconds}s on ${m.device}`;
+  $("chart").replaceChildren(...m.history.map((h) => {
+    const d = el("div"); d.style.height = Math.max(2, h.fraud_average_precision * 60) + "px";
+    d.title = `epoch ${h.epoch}: ${h.fraud_average_precision}`; return d;
+  }));
+  $("chartx").replaceChildren(...m.history.map((h) => el("span", null, `${h.epoch}`)));
+}
+
+async function load() {
+  for (const b of $("scenarios").children) b.classList.toggle("on", b.dataset.key === scenario);
+  $("err").textContent = "";
+  try {
+    const r = await fetch(`api/sample?scenario=${scenario}&seed=${seed}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const res = await r.json();
+    $("title").textContent = `Customer #${res.seed} · ${res.persona}`;
+    $("meta").textContent = `${res.transactions.length} transactions scored in ${res.infer_ms} ms on CPU`;
+    $("rows").replaceChildren(...res.transactions.map((t) => {
+      const tr = el("tr", t.is_fraud ? "fraud" : "");
+      tr.appendChild(el("td", "num", t.when));
+      const cat = el("td", null, t.category.replace("_", " "));
+      if (t.is_fraud) { cat.append(" "); cat.appendChild(el("span", "truth", "fraud")); }
+      tr.appendChild(cat);
+      tr.appendChild(el("td", "num", "$" + t.amount.toFixed(2)));
+      tr.appendChild(el("td", null, t.channel.replace("_", " ")));
+      tr.appendChild(el("td", "num", t.gap));
+      const f = el("td", "num");
+      const bar = el("span", "bar");
+      bar.style.width = Math.max(2, t.fraud * 70) + "px";
+      bar.style.background = t.fraud > 0.5 ? "var(--risk)" : "var(--mint)";
+      f.append(bar, t.fraud.toFixed(3));
+      tr.appendChild(f);
+      tr.appendChild(el("td", "num", t.surprise == null ? "–" : t.surprise.toFixed(1)));
+      const nx = el("td", "next");
+      t.next.forEach((n, i) => {
+        if (i) nx.append(", ");
+        nx.appendChild(el("b", null, n.category.replace("_", " ")));
+        nx.append(` ${Math.round(n.p * 100)}%`);
+      });
+      tr.appendChild(nx);
+      return tr;
+    }));
+  } catch (e) {
+    $("err").textContent = "Failed: " + e.message;
+  }
+}
+
+loadModel().catch((e) => { $("err").textContent = "Model info failed: " + e.message; });
+load();
+
+// Embedded in another page: report our height so the parent can size the iframe to fit.
+if (embedded) {
+  const report = () => window.parent.postMessage(
+    { type: "chalk-demo-height", height: Math.ceil(document.body.getBoundingClientRect().height) }, "*");
+  new ResizeObserver(report).observe(document.body);
+  report();
+}
+</script>
+</body>
+</html>
