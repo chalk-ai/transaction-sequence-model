@@ -6,7 +6,7 @@
 # ///
 """Serve the model that train.py produced, behind a small page, on a CPU scaling group.
 
-    ./deploy.py [--env-id <environment>]
+    ./deploy.py
 
 The replica reads `model.pt` from the `transaction-sequence-model` volume at startup with
 its own workload identity, so redeploying (or just restarting) picks up the newest weights.
@@ -14,7 +14,6 @@ its own workload identity, so redeploying (or just restarting) picks up the newe
 
 from __future__ import annotations
 
-import argparse
 import os
 import time
 from pathlib import Path
@@ -22,12 +21,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
-def configure_chalk(env_id: str | None) -> None:
+def configure_chalk() -> None:
     """Resolve deployment routing settings using the SDK's ambient login."""
     from chalkcompute import ConnectClient
 
-    if env_id:
-        os.environ["CHALK_ENVIRONMENT"] = env_id
     client = ConnectClient()
     try:
         client._ensure_auth()
@@ -39,12 +36,7 @@ def configure_chalk(env_id: str | None) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="transaction-sequence-model")
-    parser.add_argument("--env-id", default=None)
-    args = parser.parse_args()
-
-    configure_chalk(args.env_id)
+    configure_chalk()
     from chalkcompute import Image, ReadinessProbe, ScalingGroup
 
     image = (
@@ -62,7 +54,7 @@ def main() -> None:
     )
     sg = ScalingGroup(
         image=image,
-        name=args.name,
+        name='transaction-sequence-model',
         cpu="2",
         memory="4Gi",
         env={

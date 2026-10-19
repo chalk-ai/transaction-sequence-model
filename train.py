@@ -6,9 +6,9 @@
 # ///
 """Generate synthetic transactions, upload them as a Chalk dataset, and train on a GPU.
 
-    ./train.py                       # upload the dataset, run training on an L4, wait
-    ./train.py --customers 40000     # more data
-    ./train.py --skip-upload         # reuse the dataset's latest revision
+    ./train.py # upload the dataset, run training on an L4, wait
+    ./train.py # more data
+    ./train.py # reuse the dataset's latest revision
 
 The training run receives the dataset as a Polars LazyFrame and the config as a dict. It
 writes the trained weights to the Chalk volume `transaction-sequence-model`, where the
@@ -17,7 +17,6 @@ serving app (deploy.py) reads them.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import time
@@ -66,29 +65,17 @@ def train_sequence_model(df: Any, config: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--env-id", default=None)
-    parser.add_argument("--gpu", default="nvidia-l4")
-    parser.add_argument("--customers", type=int, default=20000)
-    parser.add_argument("--fraud-rate", type=float, default=0.12)
-    parser.add_argument("--epochs", type=int, default=8)
-    parser.add_argument("--skip-upload", action="store_true")
-    args = parser.parse_args()
-
-    if args.env_id:
-        os.environ["CHALK_ENVIRONMENT"] = args.env_id
     import chalkcompute
     from chalkcompute import DatasetClient, Image, Volume
 
     import data
 
-    if not args.skip_upload:
-        t0 = time.monotonic()
-        txns = data.generate(args.customers, args.fraud_rate, seed=7)
-        ref = DatasetClient().upload(DATASET, data.to_columns(txns))
-        n_fraud = sum(t.is_fraud for t in txns)
-        print(f"uploaded {len(txns):,} transactions ({n_fraud:,} fraud) as {ref} "
-              f"in {time.monotonic() - t0:.0f}s")  # fmt: skip
+    t0 = time.monotonic()
+    txns = data.generate(20000, 0.12, seed=7)
+    ref = DatasetClient().upload(DATASET, data.to_columns(txns))
+    n_fraud = sum(t.is_fraud for t in txns)
+    print(f"uploaded {len(txns):,} transactions ({n_fraud:,} fraud) as {ref} "
+          f"in {time.monotonic() - t0:.0f}s")  # fmt: skip  # fmt: skip
 
     image = (
         # PyTorch's CUDA runtime image already has torch, so the build only adds polars.
@@ -101,12 +88,12 @@ def main() -> None:
         dataset=DATASET,
         image=image,
         name="transaction-sequence-model",
-        gpu=args.gpu,
+        gpu='nvidia-l4',
         cpu="4",
         memory="16Gi",
     )(train_sequence_model)
 
-    config = {"epochs": args.epochs, "batch_size": 128, "lr": 2e-3, "d_model": 96,
+    config = {"epochs": 8, "batch_size": 128, "lr": 2e-3, "d_model": 96,
               "n_layers": 3, "n_heads": 4, "fraud_weight": 1.0}  # fmt: skip
     t0 = time.monotonic()
     try:
