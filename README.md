@@ -51,12 +51,11 @@ Training reports, on held-out customers, next-category accuracy and fraud averag
 ## Run it
 
 You need [`uv`](https://docs.astral.sh/uv/) and a Chalk environment that can schedule an L4.
-Credentials come from `chalk config`, or from `CHALK_API_SERVER`, `CHALK_CLIENT_ID`,
-`CHALK_CLIENT_SECRET` and `CHALK_ENVIRONMENT_ID`.
+Credentials come from your existing `chalk login`.
 
 ```bash
-./train.py     # generate 20k customers, upload them, train on an L4, print per-epoch metrics
-./deploy.py    # serve the trained weights; prints the page URL
+./train.py # generate 20k customers, upload them, train on an L4, print per-epoch metrics
+./deploy.py # serve the trained weights; prints the page URL
 ```
 
 `train.py` wraps `train_sequence_model(df, config)` with `chalkcompute.training(dataset=...,
@@ -74,3 +73,10 @@ rows = [dataclasses.asdict(t) for t in data.generate(4000, 0.12, seed=1)]
 cfg = model.TrainConfig(epochs=6, batch_size=64, lr=2e-3, d_model=64, n_layers=2, n_heads=4, fraud_weight=1.0)
 trained, summary = model.train_model(rows, cfg, print)
 ```
+
+## Local authentication
+
+The SDK reads credentials, API host, and the selected environment from your existing
+`chalk login` in `~/.chalk.yml`, including project-scoped and default logins.
+For unattended runs, `CHALK_CLIENT_ID` and `CHALK_CLIENT_SECRET` remain supported.
+The examples use the current environment selected by your Chalk login.

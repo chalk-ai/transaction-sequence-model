@@ -6,7 +6,7 @@
 # ///
 """Serve the model that train.py produced, behind a small page, on a CPU scaling group.
 
-    ./deploy.py [--env-id <environment>]
+    ./deploy.py
 
 The replica reads `model.pt` from the `transaction-sequence-model` volume at startup with
 its own workload identity, so redeploying (or just restarting) picks up the newest weights.
@@ -14,34 +14,13 @@ its own workload identity, so redeploying (or just restarting) picks up the newe
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import subprocess
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
 
-def load_chalk_env(env_id: str | None) -> None:
-    if "CHALK_CLIENT_ID" not in os.environ:
-        cfg = json.loads(subprocess.check_output(["chalk", "config", "--json"]))
-        os.environ["CHALK_API_SERVER"] = cfg["apiServer"]["value"]
-        os.environ["CHALK_CLIENT_ID"] = cfg["clientId"]["value"]
-        os.environ["CHALK_CLIENT_SECRET"] = cfg["clientSecret"]["value"]
-        os.environ.setdefault("CHALK_ENVIRONMENT_ID", cfg["environment"]["value"])
-    if env_id:
-        os.environ["CHALK_ENVIRONMENT_ID"] = env_id
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--name", default="transaction-sequence-model")
-    parser.add_argument("--env-id", default=None)
-    args = parser.parse_args()
-
-    load_chalk_env(args.env_id)
     from chalkcompute import Image, ReadinessProbe, ScalingGroup
 
     image = (
@@ -59,12 +38,10 @@ def main() -> None:
     )
     sg = ScalingGroup(
         image=image,
-        name=args.name,
+        name='transaction-sequence-model',
         cpu="2",
         memory="4Gi",
         env={
-            "CHALK_API_SERVER": os.environ["CHALK_API_SERVER"],
-            "CHALK_ENVIRONMENT_ID": os.environ["CHALK_ENVIRONMENT_ID"],
             "INDEX_HTML": "/web/index.html",
         },
         entrypoint=["python", "/app/serve.py"],
